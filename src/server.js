@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import { rankRelatedVideos } from './recommendations.js';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -27,7 +29,6 @@ import {
   ensureTimelinePreviewManifest,
   timelinePreviewRoot
 } from './timeline-previews.js';
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
@@ -153,10 +154,15 @@ async function deleteManagedThumbnail(thumbnailPath) {
 }
 
 function decodePathParam(input) {
+  const value = String(input || '');
+  if (!value) return '';
+
   try {
-    return decodeURIComponent(input || '');
+    return decodeURIComponent(value);
   } catch {
-    return '';
+    // Fastify may already have decoded the path. A second decodeURIComponent
+    // then throws on literal "%" in filenames (e.g. "0% Pussy").
+    return value;
   }
 }
 
@@ -174,11 +180,16 @@ function parseRating(value, fallback = null) {
   }
 
   const rating = Number(value);
-  if (!Number.isInteger(rating) || rating < 0 || rating > 5) {
+  if (!Number.isFinite(rating) || rating < 0 || rating > 5) {
     return null;
   }
 
-  return rating;
+  const halved = Math.round(rating * 2);
+  if (Math.abs(rating * 2 - halved) > 1e-9) {
+    return null;
+  }
+
+  return halved / 2;
 }
 
 function toAppleScriptString(value) {
@@ -202,7 +213,7 @@ function isPathInsideRoot(rootPath, candidatePath) {
   return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
-async function selectFolderFromFinder(initialPath = '') {
+async function selectFolderFromFinder(initialPath = '', prompt = 'Select your video library folder') {
   if (process.platform !== 'darwin') {
     return null;
   }
@@ -223,7 +234,7 @@ async function selectFolderFromFinder(initialPath = '') {
   }
 
   const script = [
-    `set chosenFolder to choose folder with prompt ${toAppleScriptString('Select your video library folder')}${defaultLocationClause}`,
+    `set chosenFolder to choose folder with prompt ${toAppleScriptString(prompt)}${defaultLocationClause}`,
     'POSIX path of chosenFolder'
   ];
 
@@ -238,7 +249,7 @@ async function selectFolderFromFinder(initialPath = '') {
   }
 }
 
-async function selectFolderFromWindows(initialPath = '') {
+async function selectFolderFromWindows(initialPath = '', prompt = 'Select your video library folder') {
   if (process.platform !== 'win32') {
     return null;
   }
@@ -261,7 +272,7 @@ async function selectFolderFromWindows(initialPath = '') {
   const script = [
     'Add-Type -AssemblyName System.Windows.Forms',
     '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
-    `$dialog.Description = ${toPowerShellSingleQuotedString('Select your video library folder')}`,
+    `$dialog.Description = ${toPowerShellSingleQuotedString(prompt)}`,
     '$dialog.ShowNewFolderButton = $false',
     selectedPathLine,
     '$result = $dialog.ShowDialog()',
@@ -282,13 +293,13 @@ async function selectFolderFromWindows(initialPath = '') {
   }
 }
 
-async function selectFolderFromSystemDialog(initialPath = '') {
+async function selectFolderFromSystemDialog(initialPath = '', prompt = 'Select your video library folder') {
   if (process.platform === 'darwin') {
-    return selectFolderFromFinder(initialPath);
+    return selectFolderFromFinder(initialPath, prompt);
   }
 
   if (process.platform === 'win32') {
-    return selectFolderFromWindows(initialPath);
+    return selectFolderFromWindows(initialPath, prompt);
   }
 
   const error = new Error('Folder picker is currently available on macOS and Windows only. Enter the path manually instead.');
@@ -735,6 +746,7 @@ app.get('/api/health', async () => ({ ok: true }));
 app.get('/api/settings', async () => {
   const settings = getSettingsObject();
   return {
+    folderPickerAvailable: ['darwin', 'win32'].includes(process.platform),
     libraryRoot: settings.libraryRoot || '',
     skipSeconds: Number(settings.skipSeconds || 10),
     libraryRows: Number(settings.libraryRows || 3),
@@ -744,7 +756,10 @@ app.get('/api/settings', async () => {
 
 app.post('/api/system/select-folder', async (request, reply) => {
   try {
-    const selectedPath = await selectFolderFromSystemDialog(request.body?.initialPath || '');
+    const selectedPath = await selectFolderFromSystemDialog(
+      request.body?.initialPath || '',
+      String(request.body?.prompt || 'Select your video library folder')
+    );
     return {
       ok: true,
       cancelled: !selectedPath,
@@ -1361,7 +1376,7 @@ app.post('/api/videos/:id/comments', async (request, reply) => {
   const rating = hasRating ? parseRating(body.rating) : 0;
 
   if (hasRating && rating === null) {
-    return reply.code(400).send({ error: 'rating must be an integer between 0 and 5.' });
+    return reply.code(400).send({ error: 'rating must be a multiple of 0.5 between 0 and 5.' });
   }
   if (!content && !hasRating) {
     return reply.code(400).send({ error: 'Enter a review or choose a rating.' });
@@ -1395,7 +1410,7 @@ app.put('/api/comments/:id', async (request, reply) => {
   const rating = nextHasRating ? parseRating(hasRatingUpdate ? body.rating : row.rating) : 0;
 
   if (nextHasRating && rating === null) {
-    return reply.code(400).send({ error: 'rating must be an integer between 0 and 5.' });
+    return reply.code(400).send({ error: 'rating must be a multiple of 0.5 between 0 and 5.' });
   }
   if (!content && !nextHasRating) {
     return reply.code(400).send({ error: 'Enter a review or choose a rating.' });
@@ -1596,7 +1611,7 @@ app.post('/api/videos/:id/thumbnail/capture', async (request, reply) => {
 
 app.get('/api/videos/:id/related', async (request, reply) => {
   const videoId = Number(request.params.id);
-  const limit = Math.max(1, Math.min(48, Number(request.query?.limit || 12)));
+  const limit = request.query?.limit || 12;
 
   if (!Number.isInteger(videoId) || videoId <= 0) {
     return reply.code(400).send({ error: 'Invalid video id' });
@@ -1605,9 +1620,7 @@ app.get('/api/videos/:id/related', async (request, reply) => {
   const source = db
     .prepare(
       `SELECT
-         v.id,
-         v.category,
-         v.height,
+         v.*,
          GROUP_CONCAT(DISTINCT t.name) AS tags_csv,
          GROUP_CONCAT(DISTINCT s.name) AS starrings_csv
        FROM videos v
@@ -1624,13 +1637,11 @@ app.get('/api/videos/:id/related', async (request, reply) => {
     return reply.code(404).send({ error: 'Video not found' });
   }
 
-  const sourceTags = new Set((source.tags_csv || '').split(',').filter(Boolean));
-  const sourceStarrings = new Set((source.starrings_csv || '').split(',').filter(Boolean));
-
   const candidates = db
     .prepare(
       `SELECT
          v.*,
+         (SELECT MAX(ws.started_at) FROM watch_sessions ws WHERE ws.video_id = v.id AND ws.watched_seconds >= 30) AS last_watched_at,
          MAX(cr.average_rating) AS average_rating,
          MAX(cr.rating_count) AS rating_count,
          GROUP_CONCAT(DISTINCT t.name) AS tags_csv,
@@ -1646,42 +1657,7 @@ app.get('/api/videos/:id/related', async (request, reply) => {
     )
     .all(videoId);
 
-  const scored = candidates
-    .map((row) => {
-      const tags = (row.tags_csv || '').split(',').filter(Boolean);
-      const starrings = (row.starrings_csv || '').split(',').filter(Boolean);
-
-      let score = 0;
-      score += tags.filter((tag) => sourceTags.has(tag)).length * 3;
-      score += starrings.filter((starring) => sourceStarrings.has(starring)).length * 3;
-      if (source.category && row.category && source.category === row.category) score += 2;
-      if (row.height > 0 && row.height === source.height) score += 1;
-
-      return { row, score };
-    })
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      if (b.row.view_count !== a.row.view_count) return b.row.view_count - a.row.view_count;
-      return (b.row.updated_at || '').localeCompare(a.row.updated_at || '');
-    });
-
-  const relatedCount = Math.max(1, Math.ceil(limit * 0.75));
-  const randomCount = limit - relatedCount;
-
-  const relatedPicks = scored.slice(0, relatedCount);
-  const relatedIds = new Set(relatedPicks.map((s) => s.row.id));
-  relatedIds.add(videoId);
-
-  const randomPool = candidates.filter((row) => !relatedIds.has(row.id));
-  for (let i = randomPool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [randomPool[i], randomPool[j]] = [randomPool[j], randomPool[i]];
-  }
-  const randomPicks = randomPool.slice(0, randomCount).map((row) => ({ row, score: -1 }));
-
-  const combined = [...relatedPicks, ...randomPicks].map(({ row }) => serializeVideoRow(row));
-
-  return { items: combined };
+  return { items: rankRelatedVideos(source, candidates, limit, Date.now(), String(request.query?.seed || randomUUID()).slice(0, 128)).map(serializeVideoRow) };
 });
 
 app.get('/api/tags', async (request) => {

@@ -68,6 +68,7 @@
             <button type="button" id="scanNowBtn" class="primary settings-scan-btn">Scan Library</button>
           </div>
         </label>
+        <p class="status">The folder must be accessible to the machine running CornField. It can be on a local disk, external drive, or mounted network share.</p>
         <div id="scanPreviewBox" class="scan-preview-box" hidden>
           <div id="scanPreviewText" class="status"></div>
           <div class="dialog-actions">
@@ -148,7 +149,7 @@
     <template id="libraryViewTemplate">
       <section class="library-toolbar">
         <div class="toolbar-grid">
-          <input id="searchInput" type="search" placeholder="Search title, file name, category, tag, starring..." />
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Search title, file name, category, tag, starring..." />
           <select id="qualityFilter">
             <option value="">All Quality</option>
             <option value="720">720p or higher</option>

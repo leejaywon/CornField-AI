@@ -118,8 +118,53 @@ async function buildFileFingerprint(absPath, fileStat) {
   return hash.digest('hex').slice(0, 24);
 }
 
+let ffprobePathCache;
+
+async function resolveFfprobePath() {
+  if (ffprobePathCache !== undefined) {
+    return ffprobePathCache;
+  }
+
+  const override = String(process.env.FFPROBE_PATH || '').trim();
+  if (override) {
+    try {
+      await fs.access(override);
+      ffprobePathCache = override;
+      return ffprobePathCache;
+    } catch {
+      // fall through to bundled / system candidates
+    }
+  }
+
+  const staticPath = ffprobe?.path;
+  if (staticPath) {
+    try {
+      await fs.access(staticPath);
+      ffprobePathCache = staticPath;
+      return ffprobePathCache;
+    } catch {
+      // bundled ffprobe is missing for this platform/arch (e.g. linux/arm64)
+    }
+  }
+
+  try {
+    const locatorBin = process.platform === 'win32' ? 'where' : 'which';
+    const { stdout } = await execFileAsync(locatorBin, ['ffprobe']);
+    const firstMatch = String(stdout || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+
+    ffprobePathCache = firstMatch || null;
+    return ffprobePathCache;
+  } catch {
+    ffprobePathCache = null;
+    return ffprobePathCache;
+  }
+}
+
 async function probeVideo(absPath) {
-  const ffprobePath = ffprobe?.path;
+  const ffprobePath = await resolveFfprobePath();
   if (!ffprobePath) {
     return { width: 0, height: 0, duration: 0, qualityBucket: 'unknown' };
   }
@@ -153,6 +198,17 @@ let quickLookPathCache;
 async function resolveFfmpegPath() {
   if (ffmpegPathCache !== undefined) {
     return ffmpegPathCache;
+  }
+
+  const override = String(process.env.FFMPEG_PATH || '').trim();
+  if (override) {
+    try {
+      await fs.access(override);
+      ffmpegPathCache = override;
+      return ffmpegPathCache;
+    } catch {
+      // fall through to bundled / system candidates
+    }
   }
 
   if (ffmpegPathStatic) {

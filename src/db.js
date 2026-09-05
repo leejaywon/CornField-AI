@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 export const dataDir = path.join(projectRoot, 'data');
+export const userDataSchemaVersion = 1;
 
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -16,6 +17,13 @@ const dbPath = path.join(dataDir, 'videoplayer.db');
 export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+
+const existingSchemaVersion = Number(db.pragma('user_version', { simple: true }) || 0);
+if (existingSchemaVersion > userDataSchemaVersion) {
+  throw new Error(
+    `This CornField data uses schema version ${existingSchemaVersion}, but this app supports up to ${userDataSchemaVersion}.`
+  );
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS videos (
@@ -74,7 +82,7 @@ CREATE TABLE IF NOT EXISTS comments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   video_id INTEGER NOT NULL,
   content TEXT NOT NULL,
-  rating INTEGER NOT NULL DEFAULT 0,
+  rating REAL NOT NULL DEFAULT 0,
   rated_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -95,6 +103,26 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS watch_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  video_id INTEGER NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  media_duration_sec REAL NOT NULL DEFAULT 0,
+  watched_seconds REAL NOT NULL DEFAULT 0,
+  last_position_sec REAL NOT NULL DEFAULT 0,
+  max_position_sec REAL NOT NULL DEFAULT 0,
+  completion_ratio REAL NOT NULL DEFAULT 0,
+  ended_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(video_id) REFERENCES videos(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_sessions_video_id ON watch_sessions(video_id);
+CREATE INDEX IF NOT EXISTS idx_watch_sessions_started_at ON watch_sessions(started_at);
+CREATE INDEX IF NOT EXISTS idx_watch_sessions_updated_at ON watch_sessions(updated_at);
 `);
 
 function getVideoColumns() {
@@ -428,11 +456,12 @@ function cleanupSystemShadowVideos() {
   deleteOrphanStarringsStmt.run();
 }
 
+// ratings are stored as REAL (0–5 in 0.5 steps); SQLite affinity on older DBs remains fine for reads/writes
 function ensureCommentRatingColumns() {
   const columns = new Set(db.prepare('PRAGMA table_info(comments)').all().map((row) => row.name));
 
   if (!columns.has('rating')) {
-    db.exec('ALTER TABLE comments ADD COLUMN rating INTEGER NOT NULL DEFAULT 0');
+    db.exec('ALTER TABLE comments ADD COLUMN rating REAL NOT NULL DEFAULT 0');
   }
 
   if (!columns.has('rated_at')) {
@@ -444,3 +473,4 @@ ensureDefaultSettings();
 ensureCommentRatingColumns();
 cleanupSystemShadowVideos();
 mergeDuplicateTags();
+db.pragma(`user_version = ${userDataSchemaVersion}`);

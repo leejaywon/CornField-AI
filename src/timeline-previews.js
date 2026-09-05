@@ -45,6 +45,17 @@ async function resolveFfmpegPath() {
     return ffmpegPathCache;
   }
 
+  const override = String(process.env.FFMPEG_PATH || '').trim();
+  if (override) {
+    try {
+      await fs.access(override);
+      ffmpegPathCache = override;
+      return ffmpegPathCache;
+    } catch {
+      // continue to bundled / PATH lookup
+    }
+  }
+
   if (ffmpegPathStatic) {
     try {
       await fs.access(ffmpegPathStatic);

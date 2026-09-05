@@ -1,115 +1,61 @@
+<img src="public/assets/brand/CornFieldLogo1.png" alt="CornField logo" width="120" />
+
 # CornField
 
-CornField is a local-first browser video player for personal libraries.  
-It keeps your original files on disk, stores app state locally, and gives you a fast browser UI for browsing, tagging, rating, and watching your own video library.
+![Node.js](https://img.shields.io/badge/Node.js-202020?style=flat&logo=nodedotjs&logoColor=5FA04E)
+![SQLite](https://img.shields.io/badge/SQLite-202020?style=flat&logo=sqlite&logoColor=54B4EB)
+![JavaScript](https://img.shields.io/badge/JavaScript-202020?style=flat&logo=javascript&logoColor=F7DF1E)
+![HTML](https://img.shields.io/badge/HTML-202020?style=flat&logo=html5&logoColor=E34F26)
+![CSS](https://img.shields.io/badge/CSS-202020?style=flat&logo=css&logoColor=663399)
+![Docker](https://img.shields.io/badge/Docker-202020?style=flat&logo=docker&logoColor=2496ED)
 
-No sample media is bundled in this repository. You point CornField at your own video folder on first use.
+A browser video player for your own library. Browse, organize, rate, and watch videos from a local folder, external drive, or mounted NAS share.
 
-## Requirements
+## Get started
 
-- Node.js 20+ recommended
-- macOS or Windows
-- A local or mounted video library folder you want to index
+1. Download and extract this repository, or clone it.
+2. Open the launcher for your computer:
+   - **macOS:** double-click `openCornField.command`.
+   - **Windows:** double-click `openCornField.cmd`.
+3. When CornField opens in your browser, go to **Settings**, choose your **Library Folder Path**, and click **Scan Library**.
 
-## Launching
+The launcher installs dependencies on the first run. If Node.js is missing, it opens the download page; install Node.js and run the launcher again. On macOS, if the launcher is blocked, allow it in **System Settings → Privacy & Security → Open Anyway**.
 
-macOS:
-- Double-click `openCornField.command`
+You can also open CornField at [localhost:4300](http://localhost:4300). Keep its terminal window open while using it.
 
-Windows:
-- Double-click `openCornField.cmd`
+## Using CornField
 
-If macOS blocks the first launch, open `System Settings > Privacy & Security` and click `Open Anyway`, then launch it again.
+- **Find a video:** search your library, filter by quality or tags, and choose a sort order.
+- **Watch:** click a video. Hover over the seek bar for a preview, or switch to theater or fullscreen mode.
+- **Organize:** edit titles, tags, and starring; add ratings and comments.
+- **Mark a moment:** use **Add Marker** to save a timestamp with a note.
+- **Refresh your library:** after adding or removing video files, use **Settings → Scan Library** and review the changes.
 
-It will:
-1. Open the official Node.js download page if Node.js is missing
-2. Install dependencies on first run
-3. Start the local server
-4. Open CornField in your browser
+Your volume, mute, and theater preferences are remembered in your browser. Videos stay in the folder you choose; no sample videos are included.
 
-On Windows, no extra permission step is usually needed for `openCornField.cmd`.
+## Optional: use a NAS or home server
 
-## First-Time Setup
+You can run CornField on a compatible NAS or another computer with Docker and open it from other devices. A NAS is not required for the normal setup above.
 
-1. Open `Settings`.
-2. Set `Library Folder Path` to your video folder.
-3. Click `Scan Library`.
+On the machine that will run CornField:
 
-## Scan Behavior
-
-- New files are added to DB with detected resolution/quality
-- Missing files are removed from DB on scan
-- Unused tags and starring entries are cleaned up automatically
-- Files starting with `._` are ignored during scan/listing
-- For newly added videos without a thumbnail, CornField tries to capture a frame near the middle of the video
-
-## Features
-
-- Scan a local folder or mounted NAS path and index videos automatically
-- Edit metadata per video: title, description, upload date, category, tags, starring, and view count
-- Keep file names as-is by default, with optional real file rename
-- Detect quality from resolution (`720p+`, `1080p+`, `1440p+`, etc.)
-- Search across title, file name, category, quality, tags, and starring
-- Browse related videos based on shared tags, starring, and category
-- Leave comments, ratings, and timeline notes
-- Upload, capture, or auto-generate thumbnails
-- Hover the player seek bar to preview nearby frames
-- Use keyboard shortcuts and persistent player preferences
-
-## Technical Notes
-
-### Manual Launch
-
-If you are developing locally or launching without the desktop helper:
+1. Download this repository and copy `.env.example` to `.env`.
+2. In `.env`, set `CORNFIELD_LIBRARY_PATH` to your video folder. To connect from other devices, set `CORNFIELD_BIND_ADDRESS` to that machine's local network IP address.
+3. From the repository folder, run:
 
 ```bash
-npm install
-npm run dev
+docker compose up -d --build
 ```
 
-Open: [http://127.0.0.1:4300](http://127.0.0.1:4300)
+4. Open `http://<server-ip>:4300`, then set **Library Folder Path** to `/library` and click **Scan Library**.
 
-### Local Data
+Everyone connecting to that server uses the same library, tags, ratings, and comments. Use it on a trusted network; CornField has no sign-in. The default Docker setup allows playback and metadata edits but keeps original video files read-only.
 
-- Your media files stay in their original folders and are not copied by default.
-- App data is stored in `data/videoplayer.db`.
-- Generated or uploaded thumbnails are stored in `data/thumbnails/`.
-- Seek-bar hover previews are cached in `data/timeline-previews/` on demand.
-- `data/` is gitignored so your personal library state does not get committed to GitHub.
+To stop, run `docker compose down`. After updating the code, run the start command again. Your app data is kept. QNAP users need a model that supports 64-bit containers in Container Station.
 
-### Tech Stack
+## Technical notes
 
-- Backend: Node.js + Fastify
-- Database: SQLite (`better-sqlite3`)
-- Frontend: Vanilla HTML/CSS/JavaScript
-- Media probing: `ffprobe-static`
-- Thumbnail extraction for auto-capture: `ffmpeg` when available
-
-### Project Structure
-
-- `src/server.js`: Fastify API, streaming, file operations
-- `src/db.js`: SQLite schema, settings, relation helpers
-- `src/media-indexer.js`: folder scan, probe, sync, auto-thumbnail logic
-- `openCornField.command`: macOS launcher
-- `openCornField.cmd`: Windows launcher
-- `public/index.html`: app shell
-- `public/app.js`: UI behavior and API integration
-- `public/styles.css`: dark theme styling
-
-### API Overview
-
-- `GET /api/settings`, `PUT /api/settings`
-- `POST /api/library/scan/preview`, `POST /api/library/scan`
-- `GET /api/videos`, `GET /api/videos/admin`, `GET /api/videos/:id`
-- `PUT /api/videos/:id/metadata`
-- `POST /api/videos/:id/rename`
-- `DELETE /api/videos/:id`
-- `POST /api/videos/:id/view`
-- `GET|POST /api/videos/:id/comments`, `PUT|DELETE /api/comments/:id`
-- `GET|POST /api/videos/:id/notes`, `PUT|DELETE /api/notes/:id`
-- `POST /api/videos/:id/thumbnail/upload`
-- `POST /api/videos/:id/thumbnail/capture`
-- `GET /api/videos/:id/previews`
-- `GET /api/videos/:id/related`
-- `GET /api/tags`, `GET /api/starrings`
-- `GET /media/*` (video streaming)
+- **Manual launch:** with Node.js installed, run `npm install` and `npm start` from the repository folder.
+- **App data:** stored in `data/`, or a persistent Docker volume when using Compose. Back up this data to keep your library metadata. Keep the database on the server's local storage, even when videos are on a network share. Docker storage options are in `.env.example`.
+- **Playback:** videos stream in their original format, so your browser must support their codecs.
+- **Stack:** Node.js, Fastify, SQLite, vanilla JavaScript, and FFmpeg/FFprobe. The container targets 64-bit Intel/AMD and ARM hosts.

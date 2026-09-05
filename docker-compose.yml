@@ -1,0 +1,20 @@
+services:
+  cornfield:
+    build: .
+    image: cornfield:local
+    ports:
+      - "${CORNFIELD_BIND_ADDRESS:-127.0.0.1}:${CORNFIELD_PORT:-4300}:4300"
+    volumes:
+      # Defaults to persistent storage managed by Docker on this host.
+      - "${CORNFIELD_DATA_PATH:-cornfield-data}:/app/data"
+      - type: bind
+        source: ${CORNFIELD_LIBRARY_PATH:?Set CORNFIELD_LIBRARY_PATH in .env to an existing video folder on the Docker host}
+        target: /library
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    init: true
+
+volumes:
+  cornfield-data:

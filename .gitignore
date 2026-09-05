@@ -18,3 +18,5 @@ data/thumbnails/*
 !data/timeline-previews/
 data/timeline-previews/*
 !data/timeline-previews/.gitkeep
+
+.superpowers/

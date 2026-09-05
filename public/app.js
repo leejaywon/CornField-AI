@@ -1,3 +1,6 @@
+import { readAudioPreferences, saveAudioPreferences } from './player-preferences.js';
+import './select-menu.js';
+
 const mainEl = document.getElementById('main');
 const settingsDialog = document.getElementById('settingsDialog');
 const settingsForm = document.getElementById('settingsForm');
@@ -38,13 +41,10 @@ const deleteConfirmCancelBtn = document.getElementById('deleteConfirmCancelBtn')
 const deleteConfirmMetadataBtn = document.getElementById('deleteConfirmMetadataBtn');
 const deleteConfirmProceedBtn = document.getElementById('deleteConfirmProceedBtn');
 
-const savedVolume = Number(localStorage.getItem('playerVolume'));
-const savedMuted = localStorage.getItem('playerMuted');
+const initialAudio = readAudioPreferences(localStorage);
 const savedSort = localStorage.getItem('librarySort');
 const savedTheaterMode = localStorage.getItem('theaterMode');
 
-const initialVolume = Number.isFinite(savedVolume) ? Math.max(0, Math.min(1, savedVolume)) : 1;
-const initialMuted = savedMuted === '1';
 
 const state = {
   settings: null,
@@ -63,8 +63,7 @@ const state = {
   },
   dbSummary: null,
   playerPrefs: {
-    volume: initialVolume,
-    muted: initialMuted,
+    ...initialAudio,
     theaterOn: savedTheaterMode === null ? true : savedTheaterMode === '1'
   },
   pendingScanRoot: '',
@@ -127,8 +126,6 @@ function cleanupActiveView() {
 }
 
 function savePlayerPrefs() {
-  localStorage.setItem('playerVolume', String(state.playerPrefs.volume));
-  localStorage.setItem('playerMuted', state.playerPrefs.muted ? '1' : '0');
   localStorage.setItem('theaterMode', state.playerPrefs.theaterOn ? '1' : '0');
 }
 
@@ -911,6 +908,7 @@ async function loadSettings() {
 
 function updateSettingsDialogInputs() {
   libraryRootInput.value = state.settings?.libraryRoot || '';
+  browseLibraryRootBtn.hidden = state.settings?.folderPickerAvailable === false;
   skipSecondsInput.value = String(state.settings?.skipSeconds || 10);
   libraryRowsInput.value = String(state.settings?.libraryRows || 3);
   const controlsHideValue = String(state.settings?.controlsHideMs ?? 2500);
@@ -1042,12 +1040,15 @@ function getFileNameBaseName(fileName) {
   return ext ? value.slice(0, -ext.length) : value;
 }
 
-function normalizeOptionalRating(value) {
-  if (value === null || value === undefined || value === '') return null;
-
+function snapRatingHalf(value) {
   const rating = Number(value);
   if (!Number.isFinite(rating)) return null;
-  return Math.max(0, Math.min(5, Math.round(rating)));
+  return Math.round(Math.max(0, Math.min(5, rating)) * 2) / 2;
+}
+
+function normalizeOptionalRating(value) {
+  if (value === null || value === undefined || value === '') return null;
+  return snapRatingHalf(value);
 }
 
 function clampRating(value) {
@@ -1061,9 +1062,34 @@ function formatAverageRating(value) {
   return (Math.round(rating * 10) / 10).toFixed(1);
 }
 
+function formatRatingLabelNumber(rating) {
+  return Number.isInteger(rating) ? String(rating) : String(rating);
+}
+
 function formatSelectedRating(value) {
   const rating = normalizeOptionalRating(value);
-  return rating === null ? 'No rating' : `${rating}/5`;
+  return rating === null ? 'No rating' : `${formatRatingLabelNumber(rating)}/5`;
+}
+
+function ratingFromPointer(clientX, trackEl) {
+  const rect = trackEl.getBoundingClientRect();
+  if (rect.width <= 0) return 0.5;
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  const raw = ratio * 5;
+  const snapped = Math.max(0.5, Math.round(raw * 2) / 2);
+  return Math.min(5, snapped);
+}
+
+function createStarsFillHtml(rating, extraClass = '') {
+  const safe = clampRating(rating);
+  const pct = (safe / 5) * 100;
+  const className = ['rating-stars-fill', extraClass].filter(Boolean).join(' ');
+  return `
+    <span class="${className}" style="--rating-fill: ${pct}%;" aria-label="${formatRatingLabelNumber(safe)} of 5 stars" role="img">
+      <span class="rating-stars-base" aria-hidden="true">★★★★★</span>
+      <span class="rating-stars-painted" aria-hidden="true">★★★★★</span>
+    </span>
+  `;
 }
 
 function updateRangeVisual(inputEl, ratio) {
@@ -1110,17 +1136,22 @@ function getCommentDisplayDateTime(comment) {
 
 function createRatingButtonsHtml(rating, buttonAttrs = '') {
   const safeRating = normalizeOptionalRating(rating);
-  const starsHtml = Array.from({ length: 5 }, (_, index) => {
-    const value = index + 1;
-    const activeClass = safeRating !== null && value <= safeRating ? ' is-active' : '';
-    return `<button type="button" class="rating-star${activeClass}" ${buttonAttrs} data-rating-value="${value}" aria-label="Set ${value} star rating">&#9733;</button>`;
-  }).join('');
-
+  const fillHtml = createStarsFillHtml(safeRating === null ? 0 : safeRating, 'rating-stars-track');
   return `
     <button type="button" class="rating-clear${safeRating === null ? ' is-active' : ''}" ${buttonAttrs} data-rating-value="" aria-label="Leave unrated">No rating</button>
     <button type="button" class="rating-clear${safeRating === 0 ? ' is-active' : ''}" ${buttonAttrs} data-rating-value="0" aria-label="Set 0 star rating">0</button>
-    <div class="rating-stars">${starsHtml}</div>
+    <div class="rating-stars rating-stars-interactive" ${buttonAttrs} data-rating-track="1" role="slider" aria-valuemin="0.5" aria-valuemax="5" aria-valuenow="${safeRating ?? ''}" tabindex="0">${fillHtml}</div>
   `;
+}
+
+function setStarsFill(containerOrTrack, rating) {
+  const track = containerOrTrack?.matches?.('[data-rating-track]')
+    ? containerOrTrack
+    : containerOrTrack?.querySelector?.('[data-rating-track]');
+  const fill = track?.querySelector?.('.rating-stars-fill') || containerOrTrack?.querySelector?.('.rating-stars-fill');
+  if (!fill) return;
+  const safe = rating === null || rating === undefined || rating === '' ? 0 : clampRating(rating);
+  fill.style.setProperty('--rating-fill', `${(safe / 5) * 100}%`);
 }
 
 function syncRatingEditor(container, rating) {
@@ -1129,12 +1160,21 @@ function syncRatingEditor(container, rating) {
   const safeRating = normalizeOptionalRating(rating);
   container.dataset.rating = safeRating === null ? '' : String(safeRating);
 
-  container.querySelectorAll('[data-rating-value]').forEach((button) => {
+  container.querySelectorAll('.rating-clear[data-rating-value]').forEach((button) => {
     const rawValue = button.getAttribute('data-rating-value');
-    const buttonValue = normalizeOptionalRating(rawValue);
-    const isActive = rawValue === '' ? safeRating === null : buttonValue === 0 ? safeRating === 0 : safeRating !== null && buttonValue <= safeRating;
+    const isActive = rawValue === '' ? safeRating === null : safeRating === 0 && rawValue === '0';
     button.classList.toggle('is-active', isActive);
   });
+
+  setStarsFill(container, safeRating === null ? 0 : safeRating);
+  const track = container.querySelector('[data-rating-track]');
+  if (track) {
+    if (safeRating === null) {
+      track.removeAttribute('aria-valuenow');
+    } else {
+      track.setAttribute('aria-valuenow', String(safeRating));
+    }
+  }
 
   const label = container.querySelector('[data-rating-label]');
   if (label) {
@@ -1147,6 +1187,39 @@ function syncRatingEditor(container, rating) {
   }
 }
 
+function bindRatingEditorControls(container, buttonSelector) {
+  if (!container || container.dataset.ratingBound === '1') return;
+  container.dataset.ratingBound = '1';
+
+  container.querySelectorAll(buttonSelector).forEach((button) => {
+    if (!button.matches('.rating-clear')) return;
+    button.addEventListener('click', (event) => {
+      const nextRating = normalizeOptionalRating(event.currentTarget.getAttribute('data-rating-value'));
+      syncRatingEditor(container, nextRating);
+    });
+  });
+
+  const track = container.querySelector('[data-rating-track]');
+  if (!track) return;
+
+  const previewFromEvent = (event) => {
+    const next = ratingFromPointer(event.clientX, track);
+    setStarsFill(track, next);
+    const label = container.querySelector('[data-rating-label]');
+    if (label) label.textContent = formatSelectedRating(next);
+  };
+
+  track.addEventListener('mousemove', previewFromEvent);
+  track.addEventListener('mouseleave', () => {
+    const committed = normalizeOptionalRating(container.dataset.rating);
+    syncRatingEditor(container, committed);
+  });
+  track.addEventListener('click', (event) => {
+    const next = ratingFromPointer(event.clientX, track);
+    syncRatingEditor(container, next);
+  });
+}
+
 function createCommentRatingDisplayHtml(comment) {
   const rating = getCommentRatingValue(comment);
   if (rating === null) {
@@ -1155,8 +1228,8 @@ function createCommentRatingDisplayHtml(comment) {
 
   return `
     <div class="comment-rating-display">
-      <span class="rating-summary rating-stars-static">${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}</span>
-      <span class="rating-label">${rating}/5</span>
+      ${createStarsFillHtml(rating, 'rating-stars-static')}
+      <span class="rating-label">${formatRatingLabelNumber(rating)}/5</span>
     </div>
   `;
 }
@@ -1390,34 +1463,6 @@ function buildLibraryQuery(options = {}) {
   if (state.filters.starring) q.set('starring', state.filters.starring);
 
   return q.toString();
-}
-
-function getLibraryToolbarHtml(options = {}) {
-  const includeTagScroller = options.includeTagScroller !== false;
-
-  return `
-    <section class="library-toolbar">
-      <div class="toolbar-grid">
-        <input id="searchInput" type="search" placeholder="Search title, file name, category, tag, starring..." />
-        <select id="qualityFilter">
-          <option value="">All Quality</option>
-          <option value="720">720p or higher</option>
-          <option value="1080">1080p or higher</option>
-          <option value="1440">1440p or higher</option>
-        </select>
-        <select id="sortSelect">
-          <option value="random">Random</option>
-          <option value="views_desc">Views (High to Low)</option>
-          <option value="views_asc">Views (Low to High)</option>
-          <option value="rating_desc">Rating (High to Low)</option>
-          <option value="rating_asc">Rating (Low to High)</option>
-          <option value="upload_desc">Date Added (Newest)</option>
-          <option value="upload_asc">Date Added (Oldest)</option>
-        </select>
-      </div>
-      ${includeTagScroller ? '<div class="tag-scroller-wrap"><div id="tagScroller" class="tag-scroller"></div></div>' : ''}
-    </section>
-  `;
 }
 
 function bindLibraryToolbar(options = {}) {
@@ -1675,11 +1720,10 @@ async function renderVideoView(videoId) {
       .join('');
 
     mainEl.innerHTML = `
-      ${getLibraryToolbarHtml({ includeTagScroller: false })}
       <div class="video-view ${state.playerPrefs.theaterOn ? 'theater-on' : 'theater-off'}" id="videoView">
       <div class="video-content">
         <div class="video-content-main">
-      <section class="player-panel">
+      <section class="player-panel video-slot-player">
         <div class="player-shell" id="playerShell">
           <video id="videoEl" src="${escapeHtml(video.mediaUrl)}" preload="metadata"></video>
           <div class="player-controls" id="playerControls">
@@ -1717,33 +1761,15 @@ async function renderVideoView(videoId) {
         </div>
       </section>
 
-      <section class="section-panel">
+      <section class="section-panel video-slot-related">
         <div class="panel-body">
           <h3 class="section-title">Related Videos</h3>
           <div id="relatedGrid" class="video-grid compact-grid" style="margin-top: .75rem;"></div>
         </div>
       </section>
-
-      <section class="section-panel">
-        <div class="panel-body">
-          <h3 class="section-title">Reviews</h3>
-          <form id="commentForm" class="form-grid comments-editor" style="margin-top: .7rem;">
-            <div class="comment-rating-field">
-              <div id="commentRatingEditor" class="rating-editor">
-                ${createRatingButtonsHtml(null, 'data-comment-form-rating="1"')}
-                <input id="commentRatingInput" type="hidden" data-rating-input value="" />
-                <span id="commentRatingLabel" class="rating-label" data-rating-label>No rating</span>
-              </div>
-            </div>
-            <textarea id="commentInput" class="wide-comment-input" placeholder="Write a comment (optional if you leave only a rating)"></textarea>
-            <button type="submit" class="primary">Add Review</button>
-          </form>
-          <div class="list-block" id="commentsList">${commentsHtml || '<div class="muted">No reviews yet.</div>'}</div>
-        </div>
-      </section>
         </div>
         <div class="video-content-side">
-      <section class="section-panel">
+      <section class="section-panel video-slot-meta">
         <div class="panel-body">
           <h3 class="section-title">Video Metadata</h3>
           <button id="metaToggleBtn" class="subtle-btn primary" type="button">Edit Video Data</button>
@@ -1790,7 +1816,7 @@ async function renderVideoView(videoId) {
         </div>
       </section>
 
-      <section class="section-panel">
+      <section class="section-panel video-slot-markers">
         <div class="panel-body">
           <h3 class="section-title">Jump Markers</h3>
           <form id="noteForm" class="form-grid jump-marker-form" style="margin-top: .7rem;">
@@ -1812,13 +1838,30 @@ async function renderVideoView(videoId) {
           <div class="list-block" id="notesList">${createNotesListHtml(notes)}</div>
         </div>
       </section>
+
+      <section class="section-panel video-slot-reviews">
+        <div class="panel-body">
+          <h3 class="section-title">Reviews</h3>
+          <form id="commentForm" class="form-grid comments-editor" style="margin-top: .7rem;">
+            <div class="comment-rating-field">
+              <div id="commentRatingEditor" class="rating-editor">
+                ${createRatingButtonsHtml(null, 'data-comment-form-rating="1"')}
+                <input id="commentRatingInput" type="hidden" data-rating-input value="" />
+                <span id="commentRatingLabel" class="rating-label" data-rating-label>No rating</span>
+              </div>
+            </div>
+            <textarea id="commentInput" class="wide-comment-input" placeholder="Write a comment (optional if you leave only a rating)"></textarea>
+            <button type="submit" class="primary">Add Review</button>
+          </form>
+          <div class="list-block" id="commentsList">${commentsHtml || '<div class="muted">No reviews yet.</div>'}</div>
+        </div>
+      </section>
         </div>
       </div>
       </div>
     `;
 
-    bindLibraryToolbar({ navigateToLibrary: true });
-
+    const recommendationSeed = crypto.randomUUID();
     const relatedGrid = document.getElementById('relatedGrid');
     let latestRelatedRequestId = 0;
     let relatedResizeTimer = null;
@@ -1848,7 +1891,7 @@ async function renderVideoView(videoId) {
       relatedGrid.innerHTML = '<div class="muted">Loading related videos...</div>';
 
       try {
-        const relatedRes = await api(`/api/videos/${videoId}/related?limit=${nextRelatedLimit}`);
+        const relatedRes = await api(`/api/videos/${videoId}/related?limit=${nextRelatedLimit}&seed=${recommendationSeed}`);
         if (token !== currentRenderToken || requestId !== latestRelatedRequestId) return;
         renderRelatedVideos(relatedRes.items || []);
       } catch (error) {
@@ -2077,6 +2120,7 @@ async function renderVideoView(videoId) {
 
     function setVolumeLevel(nextVolume) {
       const normalizedVolume = Math.max(0, Math.min(1, Number(nextVolume)));
+      if (!Number.isFinite(normalizedVolume)) return;
       videoEl.volume = normalizedVolume;
       volumeRange.value = String(normalizedVolume);
       updateRangeVisual(volumeRange, normalizedVolume);
@@ -2084,6 +2128,8 @@ async function renderVideoView(videoId) {
       if (normalizedVolume > 0 && videoEl.muted) {
         videoEl.muted = false;
       }
+      saveAudioPreferences(localStorage, videoEl, state.playerPrefs);
+      updateMuteButtonLabel();
     }
 
     function syncProgressFromVideo() {
@@ -2176,6 +2222,7 @@ async function renderVideoView(videoId) {
       });
     }
 
+    Object.assign(state.playerPrefs, readAudioPreferences(localStorage, state.playerPrefs));
     videoEl.volume = state.playerPrefs.volume;
     videoEl.muted = state.playerPrefs.muted;
     volumeRange.value = String(state.playerPrefs.volume);
@@ -2383,8 +2430,7 @@ async function renderVideoView(videoId) {
 
     muteBtn.addEventListener('click', () => {
       videoEl.muted = !videoEl.muted;
-      state.playerPrefs.muted = videoEl.muted;
-      savePlayerPrefs();
+      saveAudioPreferences(localStorage, videoEl, state.playerPrefs);
       updateMuteButtonLabel();
     });
 
@@ -2393,9 +2439,8 @@ async function renderVideoView(videoId) {
         volumeRange.value = String(videoEl.volume);
       }
       updateRangeVisual(volumeRange, videoEl.muted ? 0 : videoEl.volume);
-      state.playerPrefs.volume = videoEl.volume;
-      state.playerPrefs.muted = videoEl.muted;
-      savePlayerPrefs();
+      if (token !== currentRenderToken || !videoEl.isConnected) return;
+      saveAudioPreferences(localStorage, videoEl, state.playerPrefs);
       updateMuteButtonLabel();
     });
 
@@ -2446,8 +2491,7 @@ async function renderVideoView(videoId) {
       } else if (matchKey('KeyM', 'm')) {
         event.preventDefault();
         videoEl.muted = !videoEl.muted;
-        state.playerPrefs.muted = videoEl.muted;
-        savePlayerPrefs();
+        saveAudioPreferences(localStorage, videoEl, state.playerPrefs);
         updateMuteButtonLabel();
       } else if (matchKey('KeyT', 't')) {
         event.preventDefault();
@@ -2577,13 +2621,7 @@ async function renderVideoView(videoId) {
     const commentForm = document.getElementById('commentForm');
     const commentRatingEditor = document.getElementById('commentRatingEditor');
     syncRatingEditor(commentRatingEditor, null);
-
-    commentRatingEditor.querySelectorAll('[data-comment-form-rating]').forEach((button) => {
-      button.addEventListener('click', (event) => {
-        const nextRating = normalizeOptionalRating(event.currentTarget.getAttribute('data-rating-value'));
-        syncRatingEditor(commentRatingEditor, nextRating);
-      });
-    });
+    bindRatingEditorControls(commentRatingEditor, '[data-comment-form-rating]');
 
     commentForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -3368,13 +3406,7 @@ function setupGlobalEvents() {
 
   commentEditRatingEditor.insertAdjacentHTML('afterbegin', createRatingButtonsHtml(null, 'data-comment-edit-rating="1"'));
   syncRatingEditor(commentEditRatingEditor, null);
-
-  commentEditRatingEditor.querySelectorAll('[data-comment-edit-rating]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      const nextRating = normalizeOptionalRating(event.currentTarget.getAttribute('data-rating-value'));
-      syncRatingEditor(commentEditRatingEditor, nextRating);
-    });
-  });
+  bindRatingEditorControls(commentEditRatingEditor, '[data-comment-edit-rating]');
 
   commentEditCancelBtn.addEventListener('click', () => {
     closeCommentEditDialog();
