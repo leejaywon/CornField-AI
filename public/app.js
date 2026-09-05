@@ -908,6 +908,7 @@ async function loadSettings() {
 
 function updateSettingsDialogInputs() {
   libraryRootInput.value = state.settings?.libraryRoot || '';
+  browseLibraryRootBtn.hidden = state.settings?.folderPickerAvailable === false;
   skipSecondsInput.value = String(state.settings?.skipSeconds || 10);
   libraryRowsInput.value = String(state.settings?.libraryRows || 3);
   const controlsHideValue = String(state.settings?.controlsHideMs ?? 2500);

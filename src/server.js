@@ -746,6 +746,7 @@ app.get('/api/health', async () => ({ ok: true }));
 app.get('/api/settings', async () => {
   const settings = getSettingsObject();
   return {
+    folderPickerAvailable: ['darwin', 'win32'].includes(process.platform),
     libraryRoot: settings.libraryRoot || '',
     skipSeconds: Number(settings.skipSeconds || 10),
     libraryRows: Number(settings.libraryRows || 3),

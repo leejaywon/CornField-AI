@@ -1,0 +1,10 @@
+# Only runtime source and dependency manifests belong in the build context.
+*
+!package.json
+!package-lock.json
+!src/
+!src/**
+!public/
+!public/**
+!Dockerfile
+!.dockerignore
