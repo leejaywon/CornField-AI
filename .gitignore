@@ -8,7 +8,6 @@ npm-debug.log*
 *.log
 .env
 .env.*
-!.env.example
 videos/
 data/*
 !data/.gitkeep
