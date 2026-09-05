@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS comments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   video_id INTEGER NOT NULL,
   content TEXT NOT NULL,
-  rating INTEGER NOT NULL DEFAULT 0,
+  rating REAL NOT NULL DEFAULT 0,
   rated_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -456,11 +456,12 @@ function cleanupSystemShadowVideos() {
   deleteOrphanStarringsStmt.run();
 }
 
+// ratings are stored as REAL (0–5 in 0.5 steps); SQLite affinity on older DBs remains fine for reads/writes
 function ensureCommentRatingColumns() {
   const columns = new Set(db.prepare('PRAGMA table_info(comments)').all().map((row) => row.name));
 
   if (!columns.has('rating')) {
-    db.exec('ALTER TABLE comments ADD COLUMN rating INTEGER NOT NULL DEFAULT 0');
+    db.exec('ALTER TABLE comments ADD COLUMN rating REAL NOT NULL DEFAULT 0');
   }
 
   if (!columns.has('rated_at')) {
