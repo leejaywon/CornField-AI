@@ -1,4 +1,13 @@
+<img src="public/assets/brand/CornFieldLogo1.png" alt="CornField logo" width="120" />
+
 # CornField
+
+![Node.js](https://img.shields.io/badge/Node.js-202020?style=flat&logo=nodedotjs&logoColor=5FA04E)
+![SQLite](https://img.shields.io/badge/SQLite-202020?style=flat&logo=sqlite&logoColor=54B4EB)
+![JavaScript](https://img.shields.io/badge/JavaScript-202020?style=flat&logo=javascript&logoColor=F7DF1E)
+![HTML](https://img.shields.io/badge/HTML-202020?style=flat&logo=html5&logoColor=E34F26)
+![CSS](https://img.shields.io/badge/CSS-202020?style=flat&logo=css&logoColor=663399)
+![Docker](https://img.shields.io/badge/Docker-202020?style=flat&logo=docker&logoColor=2496ED)
 
 A browser video player for your own library. Browse, organize, rate, and watch videos from a local folder, external drive, or mounted NAS share.
 
